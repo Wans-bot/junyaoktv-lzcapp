@@ -1,0 +1,250 @@
+usage: junyaoktv
+ext_config:
+  enable_media_access: true
+application:
+  subdomain: junyaoktv
+  health_check:
+    test_url: http://junyaoktv:8080/api/stats
+    disable: false
+    start_period: 30s
+    timeout: 5s
+  upstreams:
+    - location: /
+      backend: http://junyaoktv:8080
+  injects:
+    # ---------------------------------------------------------------------
+    # A. 让页面 HTML 永远走「新鲜响应」。
+    #
+    # 背景（驳回 #20015「依然没有密码注入」的根因）：
+    # 平台注入是「网关改写 upstream 响应体」。本应用的页面由 express.static
+    # 提供，带 ETag / Last-Modified 且 Cache-Control: public, max-age=0。
+    # 客户端一旦缓存过某个页面的**未注入**副本（例如上一版 1.2.0 时打开过），
+    # 之后每次访问都会带 If-None-Match 做条件请求；lzcinit 会把 upstream 的
+    # 304 原样返回，浏览器于是复用旧副本 —— 注入脚本标签根本不会出现，
+    # 表现就是「免密注入不生效」，而全新浏览器里一切正常。
+    # 实测：curl -H 'If-None-Match: W/"1376-1a01e207de8"' https://<app>/tv/login.html
+    #       -> HTTP/1.1 304 Not Modified（响应体为空，无 /_lzc/injects/）
+    #
+    # 修法：request 阶段剥掉条件请求头（upstream 必然回 200 带正文，
+    # 网关才能改写），response 阶段对 HTML 打 no-store 并不再回 ETag，
+    # 客户端下次一定拿到注入后的新页面。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-html-no-conditional
+      'on': request
+      auth_required: false
+      when:
+        - /
+        - /admin
+        - /admin/*
+        - /m
+        - /m/*
+        - /tv
+        - /tv/*
+      do: |
+        ctx.headers.del("If-None-Match");
+        ctx.headers.del("If-Modified-Since");
+        ctx.headers.del("If-Match");
+        ctx.headers.del("If-Unmodified-Since");
+        ctx.headers.set("Cache-Control", "no-cache");
+        ctx.headers.set("Pragma", "no-cache");
+    # 上游页面没有 favicon，浏览器会自行请求 /favicon.ico 并拿到 404，
+    # 在评审的 console 里留一条 error。这里直接回 204（无内容），
+    # 不产生任何错误记录，也不伪造图标。
+    - id: junyaoktv-favicon-204
+      'on': request
+      auth_required: false
+      when:
+        - /favicon.ico
+      do: |
+        ctx.response.send(204, "", { content_type: "image/x-icon" });
+    - id: junyaoktv-html-no-store
+      'on': response
+      auth_required: false
+      when:
+        - /
+        - /admin
+        - /admin/*
+        - /m
+        - /m/*
+        - /tv
+        - /tv/*
+      do: |
+        var ct = ctx.headers.get("Content-Type") || "";
+        if (ct.indexOf("text/html") < 0) return;
+        ctx.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        ctx.headers.del("ETag");
+        ctx.headers.del("Last-Modified");
+        ctx.headers.del("Expires");
+    # ---------------------------------------------------------------------
+    # B. TV 大屏登录页（/tv/login.html，「请输入账号密码进入K歌主页面」）免密。
+    #    该页没有 <form>，登录由页面自己的 fetch('/api/tv-auth/login') 完成，
+    #    所以显式给选择器 + submitMode=click，别指望 builtin 的表单启发式。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-tv-login-autofill
+      'on': browser
+      auth_required: false
+      when:
+        - /tv/login.html*
+      do:
+        - src: builtin://simple-inject-password
+          params:
+            user: admin
+            password: admin123
+            formSelector: ".box"
+            userSelector: "#username"
+            passwordSelector: "#password"
+            submitSelector: "#login-btn"
+            submitMode: click
+            submitKeywords: "进入,登录,login,signin,submit,enter"
+            onlyFillEmpty: true
+            allowHidden: true
+            retryCount: 20
+            retryIntervalMs: 300
+            observerTimeoutMs: 30000
+    # ---------------------------------------------------------------------
+    # C. 管理后台登录（/admin/，只有管理员密码一个框 + 「登录」按钮）。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-admin-login-autofill
+      'on': browser
+      auth_required: false
+      when:
+        - /admin
+        - /admin/*
+      do:
+        - src: builtin://simple-inject-password
+          params:
+            password: admin123
+            allowPasswordOnly: true
+            formSelector: "#login-box"
+            passwordSelector: "#login-password"
+            submitSelector: "button"
+            submitMode: click
+            submitKeywords: "登录,login,signin,submit,enter"
+            onlyFillEmpty: true
+            allowHidden: true
+            retryCount: 20
+            retryIntervalMs: 300
+            observerTimeoutMs: 30000
+    # ---------------------------------------------------------------------
+    # D. 兜底：把「自动登录」写进页面本身。
+    #    上面 B/C 是官方浏览器注入，正常情况下先完成；万一某个客户端环境
+    #    没跑到注入脚本（页面被隐藏、加载时序、缓存旧副本），这一层仍能让
+    #    登录页自己完成登录。只在两个输入框都为空时动作，绝不覆盖用户已输入的
+    #    内容，也不重试（避免把一次密码错误放大成连环提交）。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-login-selfheal
+      'on': response
+      auth_required: false
+      when:
+        - /tv/login.html*
+        - /admin
+        - /admin/*
+      do: |
+        var ct = ctx.headers.get("Content-Type") || "";
+        if (ctx.headers.get("Content-Encoding") || ct.indexOf("text/html") < 0) return;
+        var html = ctx.body.getText({ max_bytes: 4194304 });
+        if (html.indexOf("junyaoktv-login-selfheal") >= 0) return;
+        var js = "(function(){"
+          + "var t=0,iv=setInterval(function(){"
+          + "t++;if(t>200){clearInterval(iv);return;}"
+          + "var u=document.getElementById('username'),p=document.getElementById('password');"
+          + "var tvb=document.getElementById('login-btn'),ap=document.getElementById('login-password');"
+          + "if(u&&p&&tvb){"
+          + "if(!u.value)u.value='admin';"
+          + "if(!p.value)p.value='admin123';"
+          + "clearInterval(iv);"
+          + "setTimeout(function(){var b=document.getElementById('login-btn');if(b){try{b.click();}catch(e){}}},900);"
+          + "return;}"
+          + "if(ap){"
+          + "if(!ap.value)ap.value='admin123';"
+          + "clearInterval(iv);"
+          + "setTimeout(function(){var ov=document.getElementById('login-overlay');"
+          + "if(ov&&ov.className&&ov.className.indexOf('hidden')>-1)return;"
+          + "var box=document.getElementById('login-box');if(!box)return;"
+          + "var bs=box.getElementsByTagName('button');if(bs&&bs.length){try{bs[0].click();}catch(e){}}},900);"
+          + "return;}"
+          + "},100);})();";
+        var tag = "<script id=\"junyaoktv-login-selfheal\">" + js + "<\/script>";
+        if (html.indexOf("</body>") < 0) return;
+        ctx.body.set(html.replace("</body>", tag + "</body>"), { content_type: "text/html; charset=utf-8" });
+    # ---------------------------------------------------------------------
+    # E. 三个功能入口留在同一个窗口里（驳回 #19846 的第二条）。
+    #    上游首页的三张卡片是 target="_blank"，客户端点一次开一个新窗口；
+    #    这里在响应里去掉该属性（实测首页 4 处 -> 0 处）。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-single-window
+      'on': response
+      auth_required: false
+      when:
+        - /
+        - /admin
+        - /admin/*
+        - /m
+        - /m/*
+        - /tv
+        - /tv/*
+      do: |
+        var ct = ctx.headers.get("Content-Type") || "";
+        if (ctx.headers.get("Content-Encoding") || ct.indexOf("text/html") < 0) return;
+        var html = ctx.body.getText({ max_bytes: 4194304 });
+        var patched = html.split(' target="_blank"').join("").split(" target='_blank'").join("");
+        if (patched === html) return;
+        ctx.body.set(patched, { content_type: "text/html; charset=utf-8" });
+    # ---------------------------------------------------------------------
+    # F. 把上游「密码由部署方在 docker-compose 的 ADMIN_PASSWORD 中设置」
+    #    改成普通用户能看懂的话。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-plain-language
+      'on': response
+      auth_required: false
+      when:
+        - /admin
+        - /admin/*
+      do: |
+        var ct = ctx.headers.get("Content-Type") || "";
+        if (ctx.headers.get("Content-Encoding") || ct.indexOf("text/html") < 0) return;
+        var html = ctx.body.getText({ max_bytes: 4194304 });
+        var OLD = "密码由部署方在 docker-compose 的 ADMIN_PASSWORD 中设置";
+        var NEW = "首次使用请用默认密码 admin123 登录";
+        if (html.indexOf(OLD) < 0) return;
+        ctx.body.set(html.split(OLD).join(NEW), { content_type: "text/html; charset=utf-8" });
+    # ---------------------------------------------------------------------
+    # G. 手机遥控页横向溢出修正（移动端截图与验收要求）。
+    # ---------------------------------------------------------------------
+    - id: junyaoktv-mobile-overflow
+      'on': response
+      auth_required: false
+      when:
+        - /m
+        - /m/
+        - /m/*
+      do: |
+        var ct = ctx.headers.get("Content-Type") || "";
+        if (ctx.headers.get("Content-Encoding") || ct.indexOf("text/html") < 0) return;
+        var html = ctx.body.getText({ max_bytes: 4194304 });
+        if (html.indexOf("junyaoktv-mobile-fix") >= 0) return;
+        if (html.indexOf("</head>") < 0) return;
+        var css = '<style id="junyaoktv-mobile-fix">.mfull:not(.open){transform:translateX(-100%) !important}</style>';
+        ctx.body.set(html.replace("</head>", css + "</head>"), { content_type: "text/html; charset=utf-8" });
+services:
+  junyaoktv:
+    image: registry.lazycat.cloud/wans/ma303973022/junyao-ktv:d3f54fc7f410c374
+    environment:
+      TZ: Asia/Shanghai
+      ADMIN_PASSWORD: admin123
+      DATA_DIR: /data
+      MV_DIR: /mv
+    binds:
+      - /lzcapp/var/junyaoktv/data:/data
+      - /lzcapp/var/junyaoktv/mv:/mv
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e
+          "require('http').get('http://127.0.0.1:8080/api/stats',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    setup_script: /bin/sh /lzcapp/pkg/content/setup-junyaoktv.sh

@@ -1,0 +1,76 @@
+package: cloud.lazycat.app.junyaoktv
+version: 1.2.2
+name: 骏耀K歌
+description: 家庭局域网 K 歌系统，手机扫码点歌，电视大屏演唱
+license: MIT
+author: 清风渡客
+homepage: https://github.com/ma303973022/junyao-ktv
+permissions:
+  required:
+    - net.internet
+    - media.read
+locales:
+  zh-CN:
+    name: 骏耀K歌
+    description: 家庭局域网 K 歌系统，手机扫码点歌，电视大屏演唱
+    usage: |
+      骏耀K歌把家里的电视、手机变成一套 K 歌系统：
+      电视或电脑当大屏播放，手机扫码点歌，互不打扰。
+
+      三步开始唱：
+      1. 打开首页的「管理后台」，用管理员密码 admin123 登录
+      2. 把手机浏览器打开首页的「手机遥控」，或直接扫首页的二维码，
+         就能搜索歌曲、点歌、切歌
+      3. 电视或电脑打开首页的「大屏演唱」，用默认演唱账号 admin、密码 admin123
+         登录（这个演唱账号在后台「用户管理」里可以增删改、可以重置密码），
+         即可全屏播放
+
+      关于曲库：
+      - 首次安装会预置 4 首示例曲目，打开就能看到完整的点歌、播放流程。
+         它们只是用来演示的测试短片（画面是渐变图案、声音是测试音），
+         不是真的歌曲，随便删掉换成你自己的就行。
+      - 换成自己的 MV：先在「文件」应用里把视频传到懒猫网盘（放在哪个文件夹
+         都行），然后回到后台「曲库管理 → 曲库来源」，添加 /mv-net 下对应的
+         那个文件夹即可（可以只选放 MV 的子目录，不必整个网盘）。
+      - 支持 mp4 / mkv / avi / flv / mov / webm / mpg；文件名建议写成
+         「歌手 - 歌名」，系统会自动拆分歌手和歌名。
+      - 添加完成后点「扫描曲库」就能刷出来。为了不把网盘里的电影、家庭录像
+         一股脑收进曲库，安装时默认只扫内置示例曲库，需要你自己添加网盘目录。
+
+      说明：
+      - 全部数据（曲库索引、点歌队列、演唱记录）都保存在你自己的服务器上
+      - 不需要注册外部账号，也不需要填写任何密钥
+      - 转码用 CPU 完成，家用场景足够；服务器性能越好，起播越快
+  en-US:
+    name: Junyao KTV
+    description: Home LAN karaoke system with phone-based song requests
+    usage: |
+      Junyao KTV turns your TV and phone into a home karaoke system: the TV
+      (or a PC) plays the big screen, your phone scans a code to pick songs.
+
+      Three steps to start singing:
+      1. Open "管理后台" from the homepage and log in with the admin
+         password admin123
+      2. On your phone, open the "手机遥控" link on the homepage or scan the
+         QR code to search and queue songs
+      3. On the TV or PC, open "大屏演唱" and log in with the default singer
+         account admin / admin123 (manage or reset singers in the admin
+         panel), then play full screen
+
+      About the library:
+      - 4 sample tracks are pre-installed so the whole request/play flow
+        works out of the box. They are demo test clips (gradient video, test
+        tone), not real songs - just delete them and add your own.
+      - To use your own MVs: upload the videos to the Lazycat netdisk with the
+        "文件" app (any folder works), then go to the admin panel's library
+        sources and add that folder under /mv-net (pick just your MV folder,
+        not the whole netdisk).
+      - mp4 / mkv / avi / flv / mov / webm / mpg are supported; name files as
+        "artist - title" and the app splits them automatically.
+      - Then click rescan. The default scan only covers the built-in sample
+        library on purpose, so your movies and home videos are not pulled in.
+
+      Notes:
+      - All data stays on your own server
+      - No external account or API key is required
+      - Transcoding runs on CPU, which is fine for home use
